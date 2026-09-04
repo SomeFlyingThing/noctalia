@@ -1885,6 +1885,7 @@ void LuauHost::ensureSystemStatsRetained() {
     return;
   }
   monitor->retainCpuTemp();
+  monitor->retainCpuFreq();
   monitor->retainGpuTemp();
   monitor->retainGpuUsage();
   monitor->retainGpuVram();
@@ -1930,6 +1931,7 @@ LuauHost::~LuauHost() {
   if (m_systemStatsRetained) {
     if (auto* monitor = m_api.systemMonitor(); monitor != nullptr) {
       monitor->releaseCpuTemp();
+      monitor->releaseCpuFreq();
       monitor->releaseGpuTemp();
       monitor->releaseGpuUsage();
       monitor->releaseGpuVram();

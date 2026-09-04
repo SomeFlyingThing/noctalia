@@ -102,6 +102,7 @@ namespace {
   }
 
   bool needsCpuTemp(SysmonStat stat) { return stat == SysmonStat::CpuTemp; }
+  bool needsCpuFreq(SysmonStat stat) { return stat == SysmonStat::CpuFreq; }
   bool needsGpuTemp(SysmonStat stat) { return stat == SysmonStat::GpuTemp; }
   bool needsGpuUsage(SysmonStat stat) { return stat == SysmonStat::GpuUsage; }
   bool needsGpuVram(SysmonStat stat) { return stat == SysmonStat::GpuVram || stat == SysmonStat::GpuVramUsed; }
@@ -196,6 +197,9 @@ SysmonWidget::SysmonWidget(SystemMonitorService* monitor, ConfigService& configS
     if (needsCpuTemp(m_stat)) {
       m_monitor->retainCpuTemp();
     }
+    if (needsCpuFreq(m_stat)) {
+      m_monitor->retainCpuFreq();
+    }
     if (needsGpuTemp(m_stat)) {
       m_monitor->retainGpuTemp();
     }
@@ -215,6 +219,9 @@ SysmonWidget::~SysmonWidget() {
   if (m_monitor != nullptr) {
     if (needsCpuTemp(m_stat)) {
       m_monitor->releaseCpuTemp();
+    }
+    if (needsCpuFreq(m_stat)) {
+      m_monitor->releaseCpuFreq();
     }
     if (needsGpuTemp(m_stat)) {
       m_monitor->releaseGpuTemp();

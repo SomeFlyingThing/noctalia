@@ -1054,6 +1054,10 @@ void SystemMonitorService::retainCpuTemp() { m_cpuTempRefs.fetch_add(1, std::mem
 
 void SystemMonitorService::releaseCpuTemp() { m_cpuTempRefs.fetch_sub(1, std::memory_order_relaxed); }
 
+void SystemMonitorService::retainCpuFreq() { m_cpuFreqRefs.fetch_add(1, std::memory_order_relaxed); }
+
+void SystemMonitorService::releaseCpuFreq() { m_cpuFreqRefs.fetch_sub(1, std::memory_order_relaxed); }
+
 void SystemMonitorService::retainCpuCores() {
   if (m_cpuCoreRefs.fetch_add(1, std::memory_order_relaxed) != 0) {
     return;
@@ -1344,12 +1348,14 @@ void SystemMonitorService::samplingLoop() {
       }
 
       nextCpu = now + cpuInterval;
-      const auto freq = noctalia::system::cpu_freq::readFreqs();
-      {
-        std::scoped_lock lock{m_statsMutex};
-        m_latest.cpuFreqAvailable = freq.curMhz.has_value();
-        m_latest.cpuFreqMhz = freq.curMhz.value_or(0.0);
-        m_latest.cpuMaxFreqMhz = freq.curMhz.has_value() ? freq.maxMhz : std::nullopt;
+      if (m_cpuFreqRefs.load(std::memory_order_relaxed) > 0) {
+        const auto freq = noctalia::system::cpu_freq::readFreqs();
+        {
+          std::scoped_lock lock{m_statsMutex};
+          m_latest.cpuFreqAvailable = freq.curMhz.has_value();
+          m_latest.cpuFreqMhz = freq.curMhz.value_or(0.0);
+          m_latest.cpuMaxFreqMhz = freq.curMhz.has_value() ? freq.maxMhz : std::nullopt;
+        }
       }
       statsTouched = true;
     }
