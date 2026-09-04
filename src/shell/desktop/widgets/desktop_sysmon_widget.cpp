@@ -509,7 +509,7 @@ void DesktopSysmonWidget::doUpdate(Renderer& renderer) {
     if (m_monitor->isRunning()) {
       scheduleNextUpdate(m_monitor->latest().sampledAt);
     } else {
-      m_updateTimer.stop();
+      stopUpdateTimer();
     }
     return;
   }
@@ -518,28 +518,94 @@ void DesktopSysmonWidget::doUpdate(Renderer& renderer) {
     updateGraph(renderer);
     scheduleNextUpdate(m_monitor->latest().sampledAt);
   } else {
-    m_updateTimer.stop();
+    stopUpdateTimer();
     clearGraph();
   }
   syncLabel();
 }
 
 void DesktopSysmonWidget::scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt) {
-  const auto sampleInterval = m_monitor->historySampleInterval();
+  const auto sampleInterval = updateInterval();
   if (sampleInterval <= std::chrono::steady_clock::duration::zero()) {
-    m_updateTimer.stop();
-    return;
-  }
-  if (latestSampleAt == std::chrono::steady_clock::time_point{}) {
-    m_updateTimer.start(kInitialSampleRetryDelay, [this]() { requestUpdate(); });
+    stopUpdateTimer();
     return;
   }
 
+  if (latestSampleAt != m_scheduledSampleAt) {
+    m_scheduledSampleAt = latestSampleAt;
+    m_sampleRetryAttempted = false;
+  }
+
   const auto now = std::chrono::steady_clock::now();
-  const auto nextExpectedAt = latestSampleAt + sampleInterval + kSamplePublishSlack;
-  const auto delay = now < nextExpectedAt ? std::chrono::duration_cast<std::chrono::milliseconds>(nextExpectedAt - now)
-                                          : kSampleRetryDelay;
+  const auto delay = nextUpdateDelay(now, latestSampleAt, sampleInterval, m_sampleRetryAttempted);
+  if (latestSampleAt == std::chrono::steady_clock::time_point{}
+      || now >= latestSampleAt + sampleInterval + kSamplePublishSlack) {
+    m_sampleRetryAttempted = true;
+  }
   m_updateTimer.start(delay, [this]() { requestUpdate(); });
+}
+
+void DesktopSysmonWidget::stopUpdateTimer() {
+  m_updateTimer.stop();
+  m_scheduledSampleAt = {};
+  m_sampleRetryAttempted = false;
+}
+
+std::chrono::steady_clock::duration DesktopSysmonWidget::updateInterval() const {
+  if (m_displayMode == DesktopSysmonDisplayMode::Gauge && m_config != nullptr) {
+    return gaugeUpdateInterval(m_stat, m_config->config().system.monitor);
+  }
+  return m_monitor != nullptr ? m_monitor->historySampleInterval() : std::chrono::steady_clock::duration::zero();
+}
+
+std::chrono::steady_clock::duration
+DesktopSysmonWidget::gaugeUpdateInterval(DesktopSysmonStat stat, const SystemConfig::MonitorConfig& config) {
+  float seconds = 0.0F;
+  switch (stat) {
+  case DesktopSysmonStat::CpuUsage:
+  case DesktopSysmonStat::CpuTemp:
+  case DesktopSysmonStat::CpuFreq:
+    seconds = config.cpuPollSeconds;
+    break;
+  case DesktopSysmonStat::GpuTemp:
+  case DesktopSysmonStat::GpuUsage:
+  case DesktopSysmonStat::GpuVram:
+  case DesktopSysmonStat::GpuVramUsed:
+    seconds = config.gpuPollSeconds;
+    break;
+  case DesktopSysmonStat::RamPct:
+    seconds = config.memoryPollSeconds;
+    break;
+  case DesktopSysmonStat::SwapPct:
+    seconds = config.diskPollSeconds;
+    break;
+  case DesktopSysmonStat::NetRx:
+  case DesktopSysmonStat::NetTx:
+    seconds = config.networkPollSeconds;
+    break;
+  }
+
+  if (seconds <= 0.0F) {
+    return std::chrono::steady_clock::duration::zero();
+  }
+  return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(seconds));
+}
+
+std::chrono::milliseconds DesktopSysmonWidget::nextUpdateDelay(
+    std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point latestSampleAt,
+    std::chrono::steady_clock::duration sampleInterval, bool alreadyRetried
+) {
+  const auto intervalMs =
+      std::max(std::chrono::ceil<std::chrono::milliseconds>(sampleInterval), std::chrono::milliseconds{1});
+  if (latestSampleAt == std::chrono::steady_clock::time_point{}) {
+    return alreadyRetried ? intervalMs : kInitialSampleRetryDelay;
+  }
+
+  const auto nextExpectedAt = latestSampleAt + sampleInterval + kSamplePublishSlack;
+  if (now < nextExpectedAt) {
+    return std::max(std::chrono::ceil<std::chrono::milliseconds>(nextExpectedAt - now), std::chrono::milliseconds{1});
+  }
+  return alreadyRetried ? intervalMs : kSampleRetryDelay;
 }
 
 void DesktopSysmonWidget::syncGaugeProgress(double normalized) {
