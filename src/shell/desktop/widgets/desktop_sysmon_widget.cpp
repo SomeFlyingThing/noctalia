@@ -51,6 +51,7 @@ namespace {
   }
 
   bool needsCpuTemp(DesktopSysmonStat stat) { return stat == DesktopSysmonStat::CpuTemp; }
+  bool needsCpuFreq(DesktopSysmonStat stat) { return stat == DesktopSysmonStat::CpuFreq; }
   bool needsGpuTemp(DesktopSysmonStat stat) { return stat == DesktopSysmonStat::GpuTemp; }
   bool needsGpuUsage(DesktopSysmonStat stat) { return stat == DesktopSysmonStat::GpuUsage; }
   bool needsGpuVram(DesktopSysmonStat stat) {
@@ -91,6 +92,8 @@ DesktopSysmonWidget::DesktopSysmonWidget(SystemMonitorService* monitor, Options 
   if (m_monitor != nullptr) {
     if (needsCpuTemp(m_stat))
       m_monitor->retainCpuTemp();
+    if (needsCpuFreq(m_stat))
+      m_monitor->retainCpuFreq();
     if (needsGpuTemp(m_stat))
       m_monitor->retainGpuTemp();
     if (needsGpuUsage(m_stat))
@@ -99,6 +102,8 @@ DesktopSysmonWidget::DesktopSysmonWidget(SystemMonitorService* monitor, Options 
       m_monitor->retainGpuVram();
     if (m_stat2.has_value() && needsCpuTemp(*m_stat2))
       m_monitor->retainCpuTemp();
+    if (m_stat2.has_value() && needsCpuFreq(*m_stat2))
+      m_monitor->retainCpuFreq();
     if (m_stat2.has_value() && needsGpuTemp(*m_stat2))
       m_monitor->retainGpuTemp();
     if (m_stat2.has_value() && needsGpuUsage(*m_stat2))
@@ -112,6 +117,8 @@ DesktopSysmonWidget::~DesktopSysmonWidget() {
   if (m_monitor != nullptr) {
     if (needsCpuTemp(m_stat))
       m_monitor->releaseCpuTemp();
+    if (needsCpuFreq(m_stat))
+      m_monitor->releaseCpuFreq();
     if (needsGpuTemp(m_stat))
       m_monitor->releaseGpuTemp();
     if (needsGpuUsage(m_stat))
@@ -120,6 +127,8 @@ DesktopSysmonWidget::~DesktopSysmonWidget() {
       m_monitor->releaseGpuVram();
     if (m_stat2.has_value() && needsCpuTemp(*m_stat2))
       m_monitor->releaseCpuTemp();
+    if (m_stat2.has_value() && needsCpuFreq(*m_stat2))
+      m_monitor->releaseCpuFreq();
     if (m_stat2.has_value() && needsGpuTemp(*m_stat2))
       m_monitor->releaseGpuTemp();
     if (m_stat2.has_value() && needsGpuUsage(*m_stat2))

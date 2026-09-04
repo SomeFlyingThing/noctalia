@@ -1054,6 +1054,22 @@ void SystemMonitorService::retainCpuTemp() { m_cpuTempRefs.fetch_add(1, std::mem
 
 void SystemMonitorService::releaseCpuTemp() { m_cpuTempRefs.fetch_sub(1, std::memory_order_relaxed); }
 
+void SystemMonitorService::retainCpuFreq() {
+  if (m_cpuFreqRefs.fetch_add(1, std::memory_order_relaxed) != 0) {
+    return;
+  }
+  // Frequency can be retained when a tooltip opens, long after the sampler started. Request its
+  // own immediate sample without disturbing the aggregate CPU cadence, then wake the sampler.
+  m_cpuFreqSampleRequested.store(true, std::memory_order_relaxed);
+  {
+    std::scoped_lock wakeLock{m_wakeMutex};
+    m_wakeGeneration.fetch_add(1, std::memory_order_relaxed);
+  }
+  m_wakeCv.notify_all();
+}
+
+void SystemMonitorService::releaseCpuFreq() { m_cpuFreqRefs.fetch_sub(1, std::memory_order_relaxed); }
+
 void SystemMonitorService::retainCpuCores() {
   if (m_cpuCoreRefs.fetch_add(1, std::memory_order_relaxed) != 0) {
     return;
@@ -1257,6 +1273,7 @@ void SystemMonitorService::samplingLoop() {
   std::optional<std::vector<cpu_stat::Totals>> prevCpuCores;
   bool cpuCoresWasEnabled = false;
   auto nextCpu = Clock::now();
+  auto nextCpuFreq = Clock::now();
   auto nextCpuCores = Clock::now();
   auto nextGpu = Clock::now();
   auto nextMemory = Clock::now();
@@ -1276,6 +1293,10 @@ void SystemMonitorService::samplingLoop() {
     const bool networkEnabled = pollCfg.networkPollSeconds > 0.0F;
     const bool diskEnabled = pollCfg.diskPollSeconds > 0.0F;
     const bool historyEnabled = historyPollSeconds > 0.0F;
+    const bool pollCpuFreq = m_cpuFreqRefs.load(std::memory_order_relaxed) > 0;
+    if (pollCpuFreq && m_cpuFreqSampleRequested.exchange(false, std::memory_order_relaxed)) {
+      nextCpuFreq = Clock::now();
+    }
     // Per-core is opt-in via retainCpuCores() and runs on a fixed 1s cadence, deliberately
     // independent of cpu_poll_seconds (default 2s): consumers want per-second resolution, and
     // pinning it here leaves aggregate CPU behaviour untouched whatever the user configures.
@@ -1344,6 +1365,10 @@ void SystemMonitorService::samplingLoop() {
       }
 
       nextCpu = now + cpuInterval;
+      statsTouched = true;
+    }
+
+    if (cpuEnabled && pollCpuFreq && now >= nextCpuFreq) {
       const auto freq = noctalia::system::cpu_freq::readFreqs();
       {
         std::scoped_lock lock{m_statsMutex};
@@ -1351,6 +1376,7 @@ void SystemMonitorService::samplingLoop() {
         m_latest.cpuFreqMhz = freq.curMhz.value_or(0.0);
         m_latest.cpuMaxFreqMhz = freq.curMhz.has_value() ? freq.maxMhz : std::nullopt;
       }
+      nextCpuFreq = now + cpuInterval;
       statsTouched = true;
     }
 
@@ -1561,6 +1587,7 @@ void SystemMonitorService::samplingLoop() {
       }
     };
     considerWake(cpuEnabled, nextCpu);
+    considerWake(cpuEnabled && pollCpuFreq, nextCpuFreq);
     considerWake(cpuCoresEnabled, nextCpuCores);
     considerWake(gpuEnabled, nextGpu);
     considerWake(memoryEnabled, nextMemory);

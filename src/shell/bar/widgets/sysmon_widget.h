@@ -88,6 +88,8 @@ private:
   void syncVisualPalette();
   void syncValueColor();
   void syncIcon(Renderer& renderer);
+  void retainCpuFreqForTooltip();
+  void releaseCpuFreqForTooltip();
   void updateGraph(Renderer& renderer);
   [[nodiscard]] float iconWidth() const;
   [[nodiscard]] float iconHeight() const;
@@ -122,6 +124,7 @@ private:
   std::string m_lastRawValue;
   bool m_isVerticalBar = false;
   bool m_lastLabelVertical = false;
+  bool m_cpuFreqTooltipRetained = false;
 
   Glyph* m_glyph = nullptr;
   Image* m_image = nullptr;

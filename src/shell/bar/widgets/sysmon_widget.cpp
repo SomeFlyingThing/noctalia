@@ -102,6 +102,7 @@ namespace {
   }
 
   bool needsCpuTemp(SysmonStat stat) { return stat == SysmonStat::CpuTemp; }
+  bool needsCpuFreq(SysmonStat stat) { return stat == SysmonStat::CpuFreq; }
   bool needsGpuTemp(SysmonStat stat) { return stat == SysmonStat::GpuTemp; }
   bool needsGpuUsage(SysmonStat stat) { return stat == SysmonStat::GpuUsage; }
   bool needsGpuVram(SysmonStat stat) { return stat == SysmonStat::GpuVram || stat == SysmonStat::GpuVramUsed; }
@@ -196,6 +197,9 @@ SysmonWidget::SysmonWidget(SystemMonitorService* monitor, ConfigService& configS
     if (needsCpuTemp(m_stat)) {
       m_monitor->retainCpuTemp();
     }
+    if (needsCpuFreq(m_stat)) {
+      m_monitor->retainCpuFreq();
+    }
     if (needsGpuTemp(m_stat)) {
       m_monitor->retainGpuTemp();
     }
@@ -212,9 +216,13 @@ SysmonWidget::SysmonWidget(SystemMonitorService* monitor, ConfigService& configS
 }
 
 SysmonWidget::~SysmonWidget() {
+  releaseCpuFreqForTooltip();
   if (m_monitor != nullptr) {
     if (needsCpuTemp(m_stat)) {
       m_monitor->releaseCpuTemp();
+    }
+    if (needsCpuFreq(m_stat)) {
+      m_monitor->releaseCpuFreq();
     }
     if (needsGpuTemp(m_stat)) {
       m_monitor->releaseGpuTemp();
@@ -233,6 +241,10 @@ SysmonWidget::~SysmonWidget() {
 
 void SysmonWidget::create() {
   auto container = ui::inputArea({});
+  if (m_monitor != nullptr && !needsCpuFreq(m_stat)) {
+    container->setOnEnter([this](const InputArea::PointerData&) { retainCpuFreqForTooltip(); });
+    container->setOnLeave([this]() { releaseCpuFreqForTooltip(); });
+  }
   std::unique_ptr<Node> glyphNode;
   if (m_showGlyph) {
     if (m_customImage.enabled()) {
@@ -310,6 +322,22 @@ void SysmonWidget::create() {
     syncVisualPalette();
     requestRedraw();
   });
+}
+
+void SysmonWidget::retainCpuFreqForTooltip() {
+  if (m_monitor == nullptr || m_cpuFreqTooltipRetained) {
+    return;
+  }
+  m_monitor->retainCpuFreq();
+  m_cpuFreqTooltipRetained = true;
+}
+
+void SysmonWidget::releaseCpuFreqForTooltip() {
+  if (m_monitor == nullptr || !m_cpuFreqTooltipRetained) {
+    return;
+  }
+  m_monitor->releaseCpuFreq();
+  m_cpuFreqTooltipRetained = false;
 }
 
 void SysmonWidget::syncVisualPalette() {
