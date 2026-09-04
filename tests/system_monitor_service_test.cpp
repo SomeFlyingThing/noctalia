@@ -1,11 +1,28 @@
 #include "config/config_types.h"
+#include "system/cpu_freq.h"
 #include "system/system_monitor_service.h"
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <print>
 #include <string>
 #include <thread>
+
+namespace {
+
+  std::atomic<int> g_cpuFreqReads{0};
+
+} // namespace
+
+namespace noctalia::system::cpu_freq {
+
+  CpuFreqs readFreqs(const std::filesystem::path&) {
+    g_cpuFreqReads.fetch_add(1, std::memory_order_relaxed);
+    return {.curMhz = 2400.0, .maxMhz = 4800.0};
+  }
+
+} // namespace noctalia::system::cpu_freq
 
 namespace {
 
@@ -53,6 +70,33 @@ namespace {
     expect(stats.sampledAtWall <= std::chrono::system_clock::now(), "sample wall time should not be in the future");
   }
 
+  void testCpuFreqDemand(SystemMonitorService& monitor) {
+    expect(g_cpuFreqReads.load(std::memory_order_relaxed) == 0, "CPU frequency should not be read without a consumer");
+
+    monitor.retainCpuFreq();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    SystemStats stats;
+    do {
+      stats = monitor.latest();
+      if (stats.cpuFreqAvailable) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    expect(stats.cpuFreqAvailable, "retaining CPU frequency should trigger a sample");
+    expect(stats.cpuFreqMhz == 2400.0, "the sampled CPU frequency should be published");
+    expect(stats.cpuMaxFreqMhz == 4800.0, "the sampled maximum CPU frequency should be published");
+    monitor.releaseCpuFreq();
+
+    const int readsAfterRelease = g_cpuFreqReads.load(std::memory_order_relaxed);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    expect(
+        g_cpuFreqReads.load(std::memory_order_relaxed) == readsAfterRelease,
+        "CPU frequency sampling should stop after the last consumer releases it"
+    );
+  }
+
 } // namespace
 
 int main() {
@@ -66,5 +110,6 @@ int main() {
   SystemMonitorService monitor(config);
   testDiskSnapshot(monitor);
   testSampleTimestamp(monitor);
+  testCpuFreqDemand(monitor);
   return g_failures == 0 ? 0 : 1;
 }
