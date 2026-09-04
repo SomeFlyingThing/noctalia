@@ -155,6 +155,16 @@ const noctalia::bar::WidgetDefinition<SysmonWidget::Options, SysmonWidgetDefinit
                       .visibleWhen = networkStat,
                   },
           }),
+          field<&Options::networkSpeedDecimalPlaces>({
+              .key = "network_speed_decimal_places",
+              .minValue = 0,
+              .maxValue = 3,
+              .step = 1,
+              .presentation =
+                  settings::WidgetSettingPresentation{
+                      .visibleWhen = networkStat,
+                  },
+          }),
           field<&Options::visualization>({
               .key = "visualization",
               .choices =

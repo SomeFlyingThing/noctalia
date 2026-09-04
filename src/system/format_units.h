@@ -25,7 +25,7 @@ namespace FormatUnits {
   [[nodiscard]] DecimalByteRateUnit decimalByteRateUnitFromString(std::string_view value);
   [[nodiscard]] std::string formatDecimalBytesPerSecond(
       double bytesPerSec, DecimalByteRateUnit unit = DecimalByteRateUnit::Auto,
-      ByteRateLabelStyle labelStyle = ByteRateLabelStyle::Full
+      ByteRateLabelStyle labelStyle = ByteRateLabelStyle::Full, int compactDecimalPlaces = 1
   );
 
 } // namespace FormatUnits

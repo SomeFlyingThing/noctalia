@@ -406,7 +406,7 @@ std::unique_ptr<DesktopWidget> DesktopWidgetFactory::create(
             .networkSpeedLabelStyle = getBoolSetting(settings, "network_speed_compact", false)
                 ? FormatUnits::ByteRateLabelStyle::Compact
                 : FormatUnits::ByteRateLabelStyle::Full,
-            .showLabel = getBoolSetting(settings, "show_label", true),
+            .networkSpeedDecimalPlaces = std::clamp(getIntSetting(settings, "network_speed_decimal_places", 1), 0, 3),
             .labelMinWidth = getFloatSetting(settings, "label_min_width", 0.0F),
             .shadow = getBoolSetting(settings, "shadow", true),
             .config = m_scriptDeps.configService,

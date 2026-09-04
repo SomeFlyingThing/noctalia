@@ -388,6 +388,12 @@ namespace desktop_settings {
             WidgetSettingVisibility{{{"stat", {"net_rx", "net_tx"}}, {"stat2", {"net_rx", "net_tx"}}}};
         add(std::move(compact));
       }
+      {
+        auto decimalPlaces = intSpec("network_speed_decimal_places", 1, 0.0, 3.0, 1.0);
+        decimalPlaces.visibleWhen =
+            WidgetSettingVisibility{{{"stat", {"net_rx", "net_tx"}}, {"stat2", {"net_rx", "net_tx"}}}};
+        add(std::move(decimalPlaces));
+      }
       add(segmentedSpec("display", "graph", sysmonDisplay));
       {
         auto gaugeLayout = segmentedSpec(
