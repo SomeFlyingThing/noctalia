@@ -170,6 +170,7 @@ private:
   std::atomic<bool> m_running{false};
   std::atomic<int> m_cpuTempRefs{0};
   std::atomic<int> m_cpuFreqRefs{0};
+  std::atomic<bool> m_cpuFreqSampleRequested{false};
   std::atomic<int> m_cpuCoreRefs{0};
   std::atomic<int> m_gpuTempRefs{0};
   std::atomic<int> m_gpuUsageRefs{0};

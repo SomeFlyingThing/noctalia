@@ -74,6 +74,7 @@ namespace {
     expect(g_cpuFreqReads.load(std::memory_order_relaxed) == 0, "CPU frequency should not be read without a consumer");
 
     monitor.retainCpuFreq();
+    monitor.retainCpuFreq();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     SystemStats stats;
     do {
@@ -89,12 +90,37 @@ namespace {
     expect(stats.cpuMaxFreqMhz == 4800.0, "the sampled maximum CPU frequency should be published");
     monitor.releaseCpuFreq();
 
+    const int readsBeforeSharedRelease = g_cpuFreqReads.load(std::memory_order_relaxed);
+    const auto sharedDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (g_cpuFreqReads.load(std::memory_order_relaxed) == readsBeforeSharedRelease
+           && std::chrono::steady_clock::now() < sharedDeadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(
+        g_cpuFreqReads.load(std::memory_order_relaxed) > readsBeforeSharedRelease,
+        "CPU frequency sampling should continue while one consumer remains"
+    );
+
+    monitor.releaseCpuFreq();
+
     const int readsAfterRelease = g_cpuFreqReads.load(std::memory_order_relaxed);
     std::this_thread::sleep_for(std::chrono::milliseconds(1200));
     expect(
         g_cpuFreqReads.load(std::memory_order_relaxed) == readsAfterRelease,
         "CPU frequency sampling should stop after the last consumer releases it"
     );
+
+    monitor.retainCpuFreq();
+    const auto resumeDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (g_cpuFreqReads.load(std::memory_order_relaxed) == readsAfterRelease
+           && std::chrono::steady_clock::now() < resumeDeadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(
+        g_cpuFreqReads.load(std::memory_order_relaxed) > readsAfterRelease,
+        "retaining CPU frequency again should trigger an immediate sample"
+    );
+    monitor.releaseCpuFreq();
   }
 
 } // namespace

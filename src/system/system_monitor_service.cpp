@@ -1058,8 +1058,9 @@ void SystemMonitorService::retainCpuFreq() {
   if (m_cpuFreqRefs.fetch_add(1, std::memory_order_relaxed) != 0) {
     return;
   }
-  // Frequency can be retained when a tooltip opens, long after the sampler started. Wake it so
-  // the first value does not have to wait for the previous aggregate CPU deadline.
+  // Frequency can be retained when a tooltip opens, long after the sampler started. Request its
+  // own immediate sample without disturbing the aggregate CPU cadence, then wake the sampler.
+  m_cpuFreqSampleRequested.store(true, std::memory_order_relaxed);
   {
     std::scoped_lock wakeLock{m_wakeMutex};
     m_wakeGeneration.fetch_add(1, std::memory_order_relaxed);
@@ -1270,9 +1271,9 @@ void SystemMonitorService::samplingLoop() {
 
   auto prevCpu = cpu_stat::readTotals();
   std::optional<std::vector<cpu_stat::Totals>> prevCpuCores;
-  bool cpuFreqWasEnabled = false;
   bool cpuCoresWasEnabled = false;
   auto nextCpu = Clock::now();
+  auto nextCpuFreq = Clock::now();
   auto nextCpuCores = Clock::now();
   auto nextGpu = Clock::now();
   auto nextMemory = Clock::now();
@@ -1293,10 +1294,9 @@ void SystemMonitorService::samplingLoop() {
     const bool diskEnabled = pollCfg.diskPollSeconds > 0.0F;
     const bool historyEnabled = historyPollSeconds > 0.0F;
     const bool pollCpuFreq = m_cpuFreqRefs.load(std::memory_order_relaxed) > 0;
-    if (pollCpuFreq && !cpuFreqWasEnabled) {
-      nextCpu = Clock::now();
+    if (pollCpuFreq && m_cpuFreqSampleRequested.exchange(false, std::memory_order_relaxed)) {
+      nextCpuFreq = Clock::now();
     }
-    cpuFreqWasEnabled = pollCpuFreq;
     // Per-core is opt-in via retainCpuCores() and runs on a fixed 1s cadence, deliberately
     // independent of cpu_poll_seconds (default 2s): consumers want per-second resolution, and
     // pinning it here leaves aggregate CPU behaviour untouched whatever the user configures.
@@ -1365,15 +1365,18 @@ void SystemMonitorService::samplingLoop() {
       }
 
       nextCpu = now + cpuInterval;
-      if (pollCpuFreq) {
-        const auto freq = noctalia::system::cpu_freq::readFreqs();
-        {
-          std::scoped_lock lock{m_statsMutex};
-          m_latest.cpuFreqAvailable = freq.curMhz.has_value();
-          m_latest.cpuFreqMhz = freq.curMhz.value_or(0.0);
-          m_latest.cpuMaxFreqMhz = freq.curMhz.has_value() ? freq.maxMhz : std::nullopt;
-        }
+      statsTouched = true;
+    }
+
+    if (cpuEnabled && pollCpuFreq && now >= nextCpuFreq) {
+      const auto freq = noctalia::system::cpu_freq::readFreqs();
+      {
+        std::scoped_lock lock{m_statsMutex};
+        m_latest.cpuFreqAvailable = freq.curMhz.has_value();
+        m_latest.cpuFreqMhz = freq.curMhz.value_or(0.0);
+        m_latest.cpuMaxFreqMhz = freq.curMhz.has_value() ? freq.maxMhz : std::nullopt;
       }
+      nextCpuFreq = now + cpuInterval;
       statsTouched = true;
     }
 
@@ -1584,6 +1587,7 @@ void SystemMonitorService::samplingLoop() {
       }
     };
     considerWake(cpuEnabled, nextCpu);
+    considerWake(cpuEnabled && pollCpuFreq, nextCpuFreq);
     considerWake(cpuCoresEnabled, nextCpuCores);
     considerWake(gpuEnabled, nextGpu);
     considerWake(memoryEnabled, nextMemory);

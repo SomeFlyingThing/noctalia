@@ -120,7 +120,8 @@ example to phase an entry's updates onto a second boundary.
 | `noctalia.diskStats(path)` | table or `nil` | Latest disk usage snapshot for an absolute or `~/` path. `nil` when the monitor or path is unavailable. Requires <PluginApiBadge feature="extended-system-stats" />. |
 
 `systemStats()` returns a copy of the host's most recent sample. Its first call opts the plugin into the optional CPU
-temperature and GPU probes represented in the snapshot; those probes are released when the plugin unloads.
+temperature, CPU frequency, and GPU probes represented in the snapshot; those probes are released when the plugin
+unloads.
 
 ```lua
 local stats = noctalia.systemStats()
