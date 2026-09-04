@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/frame_rate_limiter.h"
+#include "core/timer_manager.h"
 #include "shell/desktop/desktop_widget.h"
 #include "system/format_units.h"
 #include "ui/palette.h"
@@ -79,6 +80,7 @@ private:
   void syncValueColor();
   [[nodiscard]] std::string formatValueFor(DesktopSysmonStat stat) const;
   void syncLabel();
+  void scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt);
   void clearGraph();
   void updateGraph(Renderer& renderer);
   [[nodiscard]] float scrollProgressForSample(std::chrono::steady_clock::time_point sampledAt) const;
@@ -117,6 +119,7 @@ private:
 
   bool m_graphInitialized = false;
   float m_scrollProgress = 1.0F;
+  Timer m_updateTimer;
   FrameRateLimiter m_redrawLimiter{std::chrono::milliseconds{200}};
   std::chrono::steady_clock::time_point m_lastSampleAt;
   std::string m_lastRawValue;

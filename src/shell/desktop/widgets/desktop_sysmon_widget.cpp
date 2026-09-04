@@ -22,6 +22,9 @@ namespace {
   constexpr float kBaseWidth = 180.0F;
   constexpr float kBaseHeight = 80.0F;
   constexpr float kGraphLineWidth = 0.75F;
+  constexpr auto kSamplePublishSlack = std::chrono::milliseconds(20);
+  constexpr auto kSampleRetryDelay = std::chrono::milliseconds(25);
+  constexpr auto kInitialSampleRetryDelay = std::chrono::milliseconds(250);
   constexpr double kBytesPerMb = 1000.0 * 1000.0;
   constexpr double kFreqFallbackCeilingMhz = 5000.0;
 
@@ -189,48 +192,30 @@ void DesktopSysmonWidget::create() {
 }
 
 bool DesktopSysmonWidget::needsFrameTick() const {
-  if (m_displayMode == DesktopSysmonDisplayMode::Gauge) {
-    return true;
-  }
-  return m_scrollProgress < 1.0F;
+  return m_displayMode == DesktopSysmonDisplayMode::Graph && m_scrollProgress < 1.0F;
 }
 
 void DesktopSysmonWidget::onFrameTick(float deltaMs, Renderer& renderer) {
   (void)deltaMs;
-  if (m_displayMode == DesktopSysmonDisplayMode::Gauge) {
-    if (!m_redrawLimiter.shouldStep([this]() { requestFrameTick(); })) {
-      return;
-    }
-    if (m_monitor != nullptr) {
-      syncLabel();
-      syncGaugeProgress(currentNormalized());
-      syncValueColor();
-    }
-    requestRedraw();
+  (void)renderer;
+  if (m_displayMode != DesktopSysmonDisplayMode::Graph || m_scrollProgress >= 1.0F) {
+    m_redrawLimiter.reset();
     return;
   }
 
   if (!m_redrawLimiter.shouldStep([this]() { requestFrameTick(); })) {
     return;
   }
-  if (m_monitor != nullptr) {
-    if (m_monitor->isRunning()) {
-      const auto latestSampleAt = m_monitor->latest().sampledAt;
-      if (latestSampleAt != std::chrono::steady_clock::time_point{} && latestSampleAt != m_lastSampleAt) {
-        updateGraph(renderer);
-        syncLabel();
-      }
-    } else {
-      clearGraph();
-      syncLabel();
-    }
-  }
 
   m_scrollProgress = scrollProgressForSample(m_lastSampleAt);
   if (m_graph != nullptr) {
     m_graph->setScroll(m_scrollProgress);
   }
-  requestRedraw();
+  if (m_scrollProgress < 1.0F) {
+    requestRedraw();
+  } else {
+    m_redrawLimiter.reset();
+  }
 }
 
 bool DesktopSysmonWidget::applySetting(
@@ -520,15 +505,35 @@ void DesktopSysmonWidget::doUpdate(Renderer& renderer) {
     syncLabel();
     syncGaugeProgress(currentNormalized());
     syncValueColor();
+    if (m_monitor->isRunning()) {
+      scheduleNextUpdate(m_monitor->latest().sampledAt);
+    } else {
+      m_updateTimer.stop();
+    }
     return;
   }
 
   if (m_monitor->isRunning()) {
     updateGraph(renderer);
+    scheduleNextUpdate(m_monitor->latest().sampledAt);
   } else {
+    m_updateTimer.stop();
     clearGraph();
   }
   syncLabel();
+}
+
+void DesktopSysmonWidget::scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt) {
+  if (latestSampleAt == std::chrono::steady_clock::time_point{}) {
+    m_updateTimer.start(kInitialSampleRetryDelay, [this]() { requestUpdate(); });
+    return;
+  }
+
+  const auto now = std::chrono::steady_clock::now();
+  const auto nextExpectedAt = latestSampleAt + m_monitor->historySampleInterval() + kSamplePublishSlack;
+  const auto delay = now < nextExpectedAt ? std::chrono::duration_cast<std::chrono::milliseconds>(nextExpectedAt - now)
+                                          : kSampleRetryDelay;
+  m_updateTimer.start(delay, [this]() { requestUpdate(); });
 }
 
 void DesktopSysmonWidget::syncGaugeProgress(double normalized) {
