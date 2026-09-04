@@ -1054,7 +1054,18 @@ void SystemMonitorService::retainCpuTemp() { m_cpuTempRefs.fetch_add(1, std::mem
 
 void SystemMonitorService::releaseCpuTemp() { m_cpuTempRefs.fetch_sub(1, std::memory_order_relaxed); }
 
-void SystemMonitorService::retainCpuFreq() { m_cpuFreqRefs.fetch_add(1, std::memory_order_relaxed); }
+void SystemMonitorService::retainCpuFreq() {
+  if (m_cpuFreqRefs.fetch_add(1, std::memory_order_relaxed) != 0) {
+    return;
+  }
+  // Frequency can be retained when a tooltip opens, long after the sampler started. Wake it so
+  // the first value does not have to wait for the previous aggregate CPU deadline.
+  {
+    std::scoped_lock wakeLock{m_wakeMutex};
+    m_wakeGeneration.fetch_add(1, std::memory_order_relaxed);
+  }
+  m_wakeCv.notify_all();
+}
 
 void SystemMonitorService::releaseCpuFreq() { m_cpuFreqRefs.fetch_sub(1, std::memory_order_relaxed); }
 
@@ -1259,6 +1270,7 @@ void SystemMonitorService::samplingLoop() {
 
   auto prevCpu = cpu_stat::readTotals();
   std::optional<std::vector<cpu_stat::Totals>> prevCpuCores;
+  bool cpuFreqWasEnabled = false;
   bool cpuCoresWasEnabled = false;
   auto nextCpu = Clock::now();
   auto nextCpuCores = Clock::now();
@@ -1280,6 +1292,11 @@ void SystemMonitorService::samplingLoop() {
     const bool networkEnabled = pollCfg.networkPollSeconds > 0.0F;
     const bool diskEnabled = pollCfg.diskPollSeconds > 0.0F;
     const bool historyEnabled = historyPollSeconds > 0.0F;
+    const bool pollCpuFreq = m_cpuFreqRefs.load(std::memory_order_relaxed) > 0;
+    if (pollCpuFreq && !cpuFreqWasEnabled) {
+      nextCpu = Clock::now();
+    }
+    cpuFreqWasEnabled = pollCpuFreq;
     // Per-core is opt-in via retainCpuCores() and runs on a fixed 1s cadence, deliberately
     // independent of cpu_poll_seconds (default 2s): consumers want per-second resolution, and
     // pinning it here leaves aggregate CPU behaviour untouched whatever the user configures.
@@ -1348,7 +1365,7 @@ void SystemMonitorService::samplingLoop() {
       }
 
       nextCpu = now + cpuInterval;
-      if (m_cpuFreqRefs.load(std::memory_order_relaxed) > 0) {
+      if (pollCpuFreq) {
         const auto freq = noctalia::system::cpu_freq::readFreqs();
         {
           std::scoped_lock lock{m_statsMutex};
