@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/frame_rate_limiter.h"
+#include "core/timer_manager.h"
 #include "shell/desktop/desktop_widget.h"
 #include "system/format_units.h"
 #include "ui/palette.h"
@@ -19,6 +20,7 @@ class Graph;
 class Label;
 class ProgressBar;
 class SystemMonitorService;
+class DesktopSysmonWidgetTestAccess;
 
 enum class DesktopSysmonStat : std::uint8_t {
   CpuUsage,
@@ -69,6 +71,8 @@ public:
   void onFrameTick(float deltaMs, Renderer& renderer) override;
 
 private:
+  friend class DesktopSysmonWidgetTestAccess;
+
   void doLayout(Renderer& renderer) override;
   void doUpdate(Renderer& renderer) override;
   void onFontFamilyChanged(const std::string& family, Renderer& renderer) override;
@@ -79,6 +83,15 @@ private:
   void syncValueColor();
   [[nodiscard]] std::string formatValueFor(DesktopSysmonStat stat) const;
   void syncLabel();
+  void scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt);
+  void stopUpdateTimer();
+  [[nodiscard]] std::chrono::steady_clock::duration updateInterval() const;
+  [[nodiscard]] static std::chrono::steady_clock::duration
+  gaugeUpdateInterval(DesktopSysmonStat stat, const SystemConfig::MonitorConfig& config);
+  [[nodiscard]] static std::chrono::milliseconds nextUpdateDelay(
+      std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point latestSampleAt,
+      std::chrono::steady_clock::duration sampleInterval, bool alreadyRetried
+  );
   void clearGraph();
   void updateGraph(Renderer& renderer);
   [[nodiscard]] float scrollProgressForSample(std::chrono::steady_clock::time_point sampledAt) const;
@@ -117,6 +130,9 @@ private:
 
   bool m_graphInitialized = false;
   float m_scrollProgress = 1.0F;
+  Timer m_updateTimer;
+  std::chrono::steady_clock::time_point m_scheduledSampleAt;
+  bool m_sampleRetryAttempted = false;
   FrameRateLimiter m_redrawLimiter{std::chrono::milliseconds{200}};
   std::chrono::steady_clock::time_point m_lastSampleAt;
   std::string m_lastRawValue;

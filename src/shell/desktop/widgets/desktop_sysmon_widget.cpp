@@ -22,6 +22,9 @@ namespace {
   constexpr float kBaseWidth = 180.0F;
   constexpr float kBaseHeight = 80.0F;
   constexpr float kGraphLineWidth = 0.75F;
+  constexpr auto kSamplePublishSlack = std::chrono::milliseconds(20);
+  constexpr auto kSampleRetryDelay = std::chrono::milliseconds(25);
+  constexpr auto kInitialSampleRetryDelay = std::chrono::milliseconds(250);
   constexpr double kBytesPerMb = 1000.0 * 1000.0;
   constexpr double kFreqFallbackCeilingMhz = 5000.0;
 
@@ -189,48 +192,31 @@ void DesktopSysmonWidget::create() {
 }
 
 bool DesktopSysmonWidget::needsFrameTick() const {
-  if (m_displayMode == DesktopSysmonDisplayMode::Gauge) {
-    return true;
-  }
-  return m_scrollProgress < 1.0F;
+  return m_displayMode == DesktopSysmonDisplayMode::Graph && m_scrollProgress < 1.0F;
 }
 
 void DesktopSysmonWidget::onFrameTick(float deltaMs, Renderer& renderer) {
   (void)deltaMs;
-  if (m_displayMode == DesktopSysmonDisplayMode::Gauge) {
-    if (!m_redrawLimiter.shouldStep([this]() { requestFrameTick(); })) {
-      return;
-    }
-    if (m_monitor != nullptr) {
-      syncLabel();
-      syncGaugeProgress(currentNormalized());
-      syncValueColor();
-    }
-    requestRedraw();
+  (void)renderer;
+  if (m_displayMode != DesktopSysmonDisplayMode::Graph || m_scrollProgress >= 1.0F) {
+    m_redrawLimiter.reset();
     return;
   }
 
   if (!m_redrawLimiter.shouldStep([this]() { requestFrameTick(); })) {
     return;
   }
-  if (m_monitor != nullptr) {
-    if (m_monitor->isRunning()) {
-      const auto latestSampleAt = m_monitor->latest().sampledAt;
-      if (latestSampleAt != std::chrono::steady_clock::time_point{} && latestSampleAt != m_lastSampleAt) {
-        updateGraph(renderer);
-        syncLabel();
-      }
-    } else {
-      clearGraph();
-      syncLabel();
-    }
-  }
 
   m_scrollProgress = scrollProgressForSample(m_lastSampleAt);
   if (m_graph != nullptr) {
     m_graph->setScroll(m_scrollProgress);
   }
+  // Draw the terminal position too. Once progress reaches 1, needsFrameTick() stops the
+  // animation, so omitting this redraw leaves the graph at the previous partial position.
   requestRedraw();
+  if (m_scrollProgress >= 1.0F) {
+    m_redrawLimiter.reset();
+  }
 }
 
 bool DesktopSysmonWidget::applySetting(
@@ -520,15 +506,106 @@ void DesktopSysmonWidget::doUpdate(Renderer& renderer) {
     syncLabel();
     syncGaugeProgress(currentNormalized());
     syncValueColor();
+    if (m_monitor->isRunning()) {
+      scheduleNextUpdate(m_monitor->latest().sampledAt);
+    } else {
+      stopUpdateTimer();
+    }
     return;
   }
 
   if (m_monitor->isRunning()) {
     updateGraph(renderer);
+    scheduleNextUpdate(m_monitor->latest().sampledAt);
   } else {
+    stopUpdateTimer();
     clearGraph();
   }
   syncLabel();
+}
+
+void DesktopSysmonWidget::scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt) {
+  const auto sampleInterval = updateInterval();
+  if (sampleInterval <= std::chrono::steady_clock::duration::zero()) {
+    stopUpdateTimer();
+    return;
+  }
+
+  if (latestSampleAt != m_scheduledSampleAt) {
+    m_scheduledSampleAt = latestSampleAt;
+    m_sampleRetryAttempted = false;
+  }
+
+  const auto now = std::chrono::steady_clock::now();
+  const auto delay = nextUpdateDelay(now, latestSampleAt, sampleInterval, m_sampleRetryAttempted);
+  if (latestSampleAt == std::chrono::steady_clock::time_point{}
+      || now >= latestSampleAt + sampleInterval + kSamplePublishSlack) {
+    m_sampleRetryAttempted = true;
+  }
+  m_updateTimer.start(delay, [this]() { requestUpdate(); });
+}
+
+void DesktopSysmonWidget::stopUpdateTimer() {
+  m_updateTimer.stop();
+  m_scheduledSampleAt = {};
+  m_sampleRetryAttempted = false;
+}
+
+std::chrono::steady_clock::duration DesktopSysmonWidget::updateInterval() const {
+  if (m_displayMode == DesktopSysmonDisplayMode::Gauge && m_config != nullptr) {
+    return gaugeUpdateInterval(m_stat, m_config->config().system.monitor);
+  }
+  return m_monitor != nullptr ? m_monitor->historySampleInterval() : std::chrono::steady_clock::duration::zero();
+}
+
+std::chrono::steady_clock::duration
+DesktopSysmonWidget::gaugeUpdateInterval(DesktopSysmonStat stat, const SystemConfig::MonitorConfig& config) {
+  float seconds = 0.0F;
+  switch (stat) {
+  case DesktopSysmonStat::CpuUsage:
+  case DesktopSysmonStat::CpuTemp:
+  case DesktopSysmonStat::CpuFreq:
+    seconds = config.cpuPollSeconds;
+    break;
+  case DesktopSysmonStat::GpuTemp:
+  case DesktopSysmonStat::GpuUsage:
+  case DesktopSysmonStat::GpuVram:
+  case DesktopSysmonStat::GpuVramUsed:
+    seconds = config.gpuPollSeconds;
+    break;
+  case DesktopSysmonStat::RamPct:
+    seconds = config.memoryPollSeconds;
+    break;
+  case DesktopSysmonStat::SwapPct:
+    seconds = config.diskPollSeconds;
+    break;
+  case DesktopSysmonStat::NetRx:
+  case DesktopSysmonStat::NetTx:
+    seconds = config.networkPollSeconds;
+    break;
+  }
+
+  if (seconds <= 0.0F) {
+    return std::chrono::steady_clock::duration::zero();
+  }
+  return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(seconds));
+}
+
+std::chrono::milliseconds DesktopSysmonWidget::nextUpdateDelay(
+    std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point latestSampleAt,
+    std::chrono::steady_clock::duration sampleInterval, bool alreadyRetried
+) {
+  const auto intervalMs =
+      std::max(std::chrono::ceil<std::chrono::milliseconds>(sampleInterval), std::chrono::milliseconds{1});
+  if (latestSampleAt == std::chrono::steady_clock::time_point{}) {
+    return alreadyRetried ? intervalMs : kInitialSampleRetryDelay;
+  }
+
+  const auto nextExpectedAt = latestSampleAt + sampleInterval + kSamplePublishSlack;
+  if (now < nextExpectedAt) {
+    return std::max(std::chrono::ceil<std::chrono::milliseconds>(nextExpectedAt - now), std::chrono::milliseconds{1});
+  }
+  return alreadyRetried ? intervalMs : kSampleRetryDelay;
 }
 
 void DesktopSysmonWidget::syncGaugeProgress(double normalized) {
