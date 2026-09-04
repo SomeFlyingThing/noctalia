@@ -524,13 +524,18 @@ void DesktopSysmonWidget::doUpdate(Renderer& renderer) {
 }
 
 void DesktopSysmonWidget::scheduleNextUpdate(std::chrono::steady_clock::time_point latestSampleAt) {
+  const auto sampleInterval = m_monitor->historySampleInterval();
+  if (sampleInterval <= std::chrono::steady_clock::duration::zero()) {
+    m_updateTimer.stop();
+    return;
+  }
   if (latestSampleAt == std::chrono::steady_clock::time_point{}) {
     m_updateTimer.start(kInitialSampleRetryDelay, [this]() { requestUpdate(); });
     return;
   }
 
   const auto now = std::chrono::steady_clock::now();
-  const auto nextExpectedAt = latestSampleAt + m_monitor->historySampleInterval() + kSamplePublishSlack;
+  const auto nextExpectedAt = latestSampleAt + sampleInterval + kSamplePublishSlack;
   const auto delay = now < nextExpectedAt ? std::chrono::duration_cast<std::chrono::milliseconds>(nextExpectedAt - now)
                                           : kSampleRetryDelay;
   m_updateTimer.start(delay, [this]() { requestUpdate(); });
