@@ -211,9 +211,10 @@ void DesktopSysmonWidget::onFrameTick(float deltaMs, Renderer& renderer) {
   if (m_graph != nullptr) {
     m_graph->setScroll(m_scrollProgress);
   }
-  if (m_scrollProgress < 1.0F) {
-    requestRedraw();
-  } else {
+  // Draw the terminal position too. Once progress reaches 1, needsFrameTick() stops the
+  // animation, so omitting this redraw leaves the graph at the previous partial position.
+  requestRedraw();
+  if (m_scrollProgress >= 1.0F) {
     m_redrawLimiter.reset();
   }
 }
